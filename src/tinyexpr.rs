@@ -57,6 +57,18 @@ impl Debug for Function {
     }
 }
 
+impl PartialEq for Function {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Constant(l0), Self::Constant(r0)) => l0 == r0,
+            (Self::Fn1(l0), Self::Fn1(r0)) => std::ptr::fn_addr_eq(*l0, *r0),
+            (Self::Fn2(l0), Self::Fn2(r0)) => std::ptr::fn_addr_eq(*l0, *r0),
+            (Self::FnN(l0), Self::FnN(r0)) => std::ptr::fn_addr_eq(*l0, *r0),
+            _ => false,
+        }
+    }
+}
+
 impl Function {
     pub fn arity(&self) -> Option<usize> {
         match self {
@@ -141,7 +153,7 @@ impl Operator {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Token {
     Error,
     End,
@@ -331,7 +343,7 @@ impl<'s> State<'s> {
     }
 
     pub fn error(&self) -> Result<(), Error> {
-        if let Token::End = self.current {
+        if self.current == Token::End {
             Ok(())
         } else if let Some(error) = self.error {
             Err(error)
@@ -361,7 +373,7 @@ impl<'s> State<'s> {
     }
 
     fn no_specific_error(&self) -> bool {
-        !matches!(self.current, Token::Error)
+        (self.current != Token::Error)
             || matches!(
                 self.error,
                 Some(Error {
@@ -375,7 +387,7 @@ impl<'s> State<'s> {
     /// another token, `None` is returned. Otherwise, the number of consumed characters is returned
     /// along with either the token, or `None` in case of ignored (whitespace) input.
     fn get_token(&mut self) -> (usize, Token) {
-        debug_assert!(!matches!(self.current, Token::Error));
+        debug_assert!(self.current != Token::Error);
 
         // Consume whitespaces before next token
         let Some(first_char_pos) = self
@@ -481,7 +493,7 @@ impl<'s> State<'s> {
                 let after_first = self.pos;
 
                 self.next_token();
-                if let Token::Number(_) | Token::Function(_) = self.current {
+                if matches!(self.current, Token::Number(_) | Token::Function(_)) {
                     // Two numbers after each other:
                     // math '5 2'
                     // math '3 pi'
@@ -504,7 +516,7 @@ impl<'s> State<'s> {
             }
             Token::Function(f) => {
                 self.next_token();
-                let have_open = matches!(self.current, Token::Open);
+                let have_open = self.current == Token::Open;
                 if have_open {
                     // If we *have* an opening parenthesis,
                     // we need to consume it and
@@ -514,7 +526,7 @@ impl<'s> State<'s> {
 
                 if f.arity() == Some(0) {
                     if have_open {
-                        if let Token::Close = self.current {
+                        if self.current == Token::Close {
                             self.next_token();
                         } else if self.no_specific_error() {
                             self.set_error(ErrorKind::MissingClosingParen, None);
@@ -535,7 +547,7 @@ impl<'s> State<'s> {
                         first_err = Some(self.pos - 1);
                     }
                     parameters.push(self.expr());
-                    if !matches!(self.current, Token::Sep) {
+                    if self.current != Token::Sep {
                         break;
                     }
                     self.next_token();
@@ -546,18 +558,18 @@ impl<'s> State<'s> {
                     if !have_open {
                         return f.call(&parameters);
                     }
-                    if let Token::Close = self.current {
+                    if self.current == Token::Close {
                         // We have an opening and a closing paren, consume the closing one and done.
                         self.next_token();
                         return f.call(&parameters);
                     }
-                    if !matches!(self.current, Token::Error) {
+                    if self.current != Token::Error {
                         // If we had the right number of arguments, we're missing a closing paren.
                         self.set_error(ErrorKind::MissingClosingParen, None);
                     }
                 }
 
-                if !matches!(self.current, Token::Error)
+                if (self.current != Token::Error)
                     || matches!(
                         self.error,
                         Some(Error {
@@ -579,12 +591,12 @@ impl<'s> State<'s> {
                     let mut err_pos_len = None;
                     if let Some(first_err) = first_err {
                         let mut len = self.pos - first_err;
-                        if !matches!(self.current, Token::Close) {
+                        if self.current != Token::Close {
                             // TODO: Rationalize where we put the cursor exactly.
                             // If we have a closing paren it's on it, if we don't it's before the number.
                             len += 1;
                         }
-                        if let Token::End = self.current {
+                        if self.current == Token::End {
                             // Don't place a caret after the end of string
                             len -= 1;
                         }
@@ -599,12 +611,12 @@ impl<'s> State<'s> {
             Token::Open => {
                 self.next_token();
                 let ret = self.expr();
-                if let Token::Close = self.current {
+                if self.current == Token::Close {
                     self.next_token();
                     return ret;
                 }
 
-                if !matches!(self.current, Token::Error | Token::End) && self.error.is_none() {
+                if (self.current != Token::End) && self.error.is_none() {
                     self.set_error(ErrorKind::TooManyArgs, None);
                 } else if self.no_specific_error() {
                     self.set_error(ErrorKind::MissingClosingParen, None);
